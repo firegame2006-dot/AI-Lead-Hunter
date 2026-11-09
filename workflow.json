@@ -1,0 +1,940 @@
+{
+  "name": "AI Lead Hunter - Ukraine",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"telegramChatId\":      \"YOUR_TELEGRAM_CHAT_ID\",\n  \n  \"testMode\": true,\n  \"testMaxSearches\": 2,\n  \"testMaxCandidates\": 5,\n  \"testMaxLeads\": 3,\n  \n  \"maxSearchesPerRun\": 12,\n  \"maxResultsPerSearch\": 20,\n  \"maxCandidatesPerRun\": 60,\n  \"maxLeadsPerRun\": 15, \"maxLeadsInTelegramReport\":  15, \n  \n  \"minLeadScore\": 55,\n  \n  \"enableWebEnrichment\":false,\n  \"aiModel\": \"gpt-4o-mini\",\n  \"languageCode\": \"en\",\n  \"regionCode\": \"UA\",\n\n  \"queryModifiers\": [\"\",\n \"private\", \"services\",\n \"best\", \"affordable\"],\n\n  \"cities\": [\n    \"Kyiv\",\n    \"Lviv\",\n    \"Odesa\",\n    \"Dnipro\",\n    \"Kharkiv\",\n    \"Vinnytsia\",\n    \"Ivano-Frankivsk\",\n    \"Ternopil\",\n    \"Lutsk\",\n    \"Rivne\",\n    \"Chernivtsi\",\n    \"Poltava\",\n    \"Cherkasy\",\n    \"Zhytomyr\",\n    \"Uzhhorod\",\n    \"Khmelnytskyi\",\n    \"Kropyvnytskyi\",\n    \"Zaporizhzhia\",\n    \"Mykolaiv\",\n    \"Sumy\"\n  ],\n\n  \"categories\":[\n    \"dental clinic\",\n    \"beauty salon\",\n    \"barbershop\",\n    \"cosmetology\",\n    \"massage salon\",\n    \"car service\",\n    \"tire service\",\n    \"driving school\",\n    \"law firm\",\n    \"accounting services\",\n    \"veterinary clinic\",\n    \"fitness club\",\n    \"dance studio\",\n    \"construction company\",\n    \"apartment renovation\",\n    \"custom furniture\",\n    \"windows and doors\",\n    \"landscape design\",\n    \"cleaning company\",\n    \"freight transportation\",\n    \"catering\",\n    \"wedding agency\",\n    \"travel agency\",\n    \"language school\",\n    \"printing house\",\n    \"appliance repair\"\n  ]\n}\n    \n  \n  \n\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -544,
+        -224
+      ],
+      "id": "cbba2b04-bdc6-400a-a105-c909498990aa",
+      "name": "Config"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -816,
+        -224
+      ],
+      "id": "3123e786-d2df-4aee-89bf-0f7d987b3fa3",
+      "name": "Daily Run 09:00",
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -816,
+        -32
+      ],
+      "id": "04a2f716-2880-4b0d-85cf-6d6cd00eec92",
+      "name": "Manual Test Run",
+      "notesInFlow": true,
+      "notes": "Press \"Test workflow\" to run once by hand. Keep testMode = true in Config."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds Google Places search queries from \"city + category\" combinations. Each run takes a limited number of queries and shifts to a different slice of the list every day, so all cities and categories get covered gradually without re-checking the same queries.\nconst cfg = $input.first()?.json ?? {};\n\nconst asArray = (v) =>\n  Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim().length > 0) : [];\n\nconst asInt = (v, fallback) => {\n  const n = Number(v);\n  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;\n};\n\nconst cities = asArray(cfg.cities);\nconst categories = asArray(cfg.categories);\n\nif (cities.length === 0 || categories.length === 0) {\n  throw new Error(\n    'Config error: \"cities\" and \"categories\" must both be non-empty arrays in the Config node.',\n  );\n}\n\nconst modifiersRaw = Array.isArray(cfg.queryModifiers) ? cfg.queryModifiers : [];\nconst modifiers = modifiersRaw.filter((m) => typeof m === 'string');\nconst modifierList = modifiers.length > 0 ? modifiers : [''];\n\nconst testMode = cfg.testMode === true;\nconst maxSearches = testMode ? asInt(cfg.testMaxSearches, 2) : asInt(cfg.maxSearchesPerRun, 12);\nconst pageSize = Math.min(20, asInt(cfg.maxResultsPerSearch, 20));\n\nconst pairs = [];\nfor (const city of cities) {\n  for (const category of categories) {\n    pairs.push({ city, category });\n  }\n}\n\n// Daily rotation: each calendar day picks a different slice of the full set of search combinations.\nconst dayIndex = Math.floor(Date.now() / 86400000);\nconst start = (dayIndex * maxSearches) % pairs.length;\nconst modifier = modifierList[dayIndex % modifierList.length] ?? '';\n\nconst languageCode = typeof cfg.languageCode === 'string' && cfg.languageCode ? cfg.languageCode : 'en';\nconst regionCode = typeof cfg.regionCode === 'string' && cfg.regionCode ? cfg.regionCode : 'UA';\n\nconst take = Math.min(maxSearches, pairs.length);\nconst out = [];\n\nfor (let i = 0; i < take; i++) {\n  const pair = pairs[(start + i) % pairs.length];\n  const query = [modifier, pair.category, pair.city].filter((p) => p && p.trim()).join(' ').trim();\n\n  out.push({\n    json: {\n      query,\n      city: pair.city,\n      category: pair.category,\n      pageSize,\n      languageCode,\n      regionCode,\n      searchIndex: i,\n      rotationDay: dayIndex,\n      testMode,\n    },\n  });\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        -208
+      ],
+      "id": "6fe7f518-21c8-46a4-bd22-61d59e0d6a29",
+      "name": "Build Search Queries"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://places.googleapis.com/v1/places:searchText",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Goog-FieldMask",
+              "value": "places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.internationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.primaryType,places.primaryTypeDisplayName,places.googleMapsUri,places.businessStatus"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ textQuery: $json.query, languageCode: $json.languageCode, regionCode: $json.regionCode, pageSize: $json.pageSize }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -64,
+        -224
+      ],
+      "id": "67ec245b-eec0-4a67-9d90-caaef8b9fa48",
+      "name": "Search Google Maps",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "notesInFlow": true,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "notes": "Retries 3x for rate limits. A permanent failure passes an error item through instead of stopping the run."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turns raw Google Places results into lead candidates. If a single search fails or returns nothing, the workflow does not stop and keeps processing the other results.\n\nconst queries = $('Build Search Queries').all().map((i) => i.json);\nconst items = $input.all();\n\nconst SOCIAL_HOST =\n  /(?:^|\\.)(facebook\\.com|fb\\.com|fb\\.me|instagram\\.com|tiktok\\.com|t\\.me|telegram\\.me|vk\\.com|linkedin\\.com|youtube\\.com|twitter\\.com|x\\.com)$/i;\n\n// Detects placeholder sites: site-builder or link-in-bio pages rather than a real business website.\nconst WEAK_HOST = /(?:^|\\.)(business\\.site|sites\\.google\\.com|linktr\\.ee|taplink\\.cc|carrd\\.co)$/i;\n\nfunction parseUrl(value) {\n  if (typeof value !== 'string' || value.trim().length === 0) return null;\n  try {\n    const url = new URL(value.trim());\n    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;\n    return url;\n  } catch {\n    return null;\n  }\n}\n\nfunction errorText(err) {\n  if (!err) return 'unknown error';\n  if (typeof err === 'string') return err.slice(0, 300);\n  if (typeof err.message === 'string') return err.message.slice(0, 300);\n  try {\n    return JSON.stringify(err).slice(0, 300);\n  } catch {\n    return 'unreadable error object';\n  }\n}\n\nconst stats = {\n  searchesAttempted: items.length,\n  searchesFailed: 0,\n  searchesEmpty: 0,\n  placesSeen: 0,\n  skippedClosed: 0,\n  skippedHasWebsite: 0,\n  skippedInvalidRecord: 0,\n  duplicatesWithinRun: 0,\n};\n\nconst errors = [];\nconst candidates = [];\nconst seenInRun = new Set();\n\nfor (let i = 0; i < items.length; i++) {\n  const ctx = queries[i] ?? {};\n  const data = items[i]?.json ?? {};\n  const label = ctx.query ?? 'search #' + (i + 1);\n\n  // Checks for two kinds of errors: an n8n error or an error returned by the Google API.\n  if (data.error) {\n    stats.searchesFailed++;\n    errors.push('Places search failed for \"' + label + '\": ' + errorText(data.error));\n    continue;\n  }\n\n  const places = Array.isArray(data.places) ? data.places : [];\n  if (places.length === 0) {\n    stats.searchesEmpty++;\n    continue;\n  }\n\n  for (const place of places) {\n    stats.placesSeen++;\n\n    const placeId = typeof place?.id === 'string' ? place.id.trim() : '';\n    const rawName = place?.displayName?.text;\n    const name = typeof rawName === 'string' ? rawName.trim() : '';\n\n    if (!placeId || !name) {\n      stats.skippedInvalidRecord++;\n      continue;\n    }\n\n    if (place.businessStatus && place.businessStatus !== 'OPERATIONAL') {\n      stats.skippedClosed++;\n      continue;\n    }\n\n    if (seenInRun.has(placeId)) {\n      stats.duplicatesWithinRun++;\n      continue;\n    }\n    seenInRun.add(placeId);\n\n    const url = parseUrl(place.websiteUri);\n    const host = url ? url.hostname.replace(/^www\\./i, '') : '';\n    const isSocialOnly = host ? SOCIAL_HOST.test(host) : false;\n    const isWeakSite = host ? WEAK_HOST.test(host) : false;\n    const hasRealWebsite = Boolean(host) && !isSocialOnly && !isWeakSite;\n\n    // The core job of Lead Hunter: keep only businesses that do not have a proper website of their own.\n    if (hasRealWebsite) {\n      stats.skippedHasWebsite++;\n      continue;\n    }\n\n    const rating = Number(place.rating);\n    const reviews = Number(place.userRatingCount);\n\n    candidates.push({\n      place_id: placeId,\n      name,\n      city: typeof ctx.city === 'string' ? ctx.city : '',\n      category: typeof ctx.category === 'string' ? ctx.category : '',\n      google_type:\n        (typeof place?.primaryTypeDisplayName?.text === 'string'\n          ? place.primaryTypeDisplayName.text\n          : place?.primaryType) ?? '',\n      address: typeof place.formattedAddress === 'string' ? place.formattedAddress : '',\n      phone:\n        (typeof place.internationalPhoneNumber === 'string' ? place.internationalPhoneNumber : '') ||\n        (typeof place.nationalPhoneNumber === 'string' ? place.nationalPhoneNumber : ''),\n      website: url ? url.href : '',\n      website_is_social_only: isSocialOnly,\n      website_is_weak: isWeakSite,\n      maps_url: typeof place.googleMapsUri === 'string' ? place.googleMapsUri : '',\n      rating: Number.isFinite(rating) ? rating : 0,\n      reviews: Number.isFinite(reviews) ? reviews : 0,\n      source_query: label,\n    });\n  }\n}\n\nstats.candidatesFound = candidates.length;\n\nreturn [{ json: { candidates, stats, errors } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        -224
+      ],
+      "id": "5c8d6040-ff6a-4a43-9a2c-d2064a8aac4d",
+      "name": "Normalize & Filter Businesses"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "lead_hunter_memory"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        368,
+        -224
+      ],
+      "id": "753c5de3-2b58-410d-b680-56d85fc6c6d0",
+      "name": "Get Known Businesses",
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "notes": "SELECT YOUR DATA TABLE HERE. Reads every business already found on earlier days."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Removes businesses that were already found earlier.\n\n// Reads the stored businesses from the Data Table.\n\n// Reads candidates from the previous workflow step.\n\n// Always returns output, even when there are no new candidates.\n\nconst source = $('Normalize & Filter Businesses').first()?.json ?? {};\nconst cfg = $('Config').first()?.json ?? {};\n\nconst candidates = Array.isArray(source.candidates) ? source.candidates : [];\nconst stats = Object.assign({}, source.stats ?? {});\nconst errors = Array.isArray(source.errors) ? source.errors.slice() : [];\n\nconst rawRows = $input.all().map((i) => i?.json ?? {});\n\n// If the Data Table is unavailable, continue without duplicate checking,\n// so a memory failure does not stop the whole workflow.\nfor (const row of rawRows) {\n  if (row && row.error) {\n    errors.push('Memory lookup (Data Table) failed - duplicate protection is degraded this run.');\n  }\n}\n\nconst knownRows = rawRows.filter((r) => r && !r.error && (r.place_id || r.name));\n\nconst normalise = (v) =>\n  String(v ?? '')\n    .toLowerCase()\n    .replace(/[^a-zЀ-ӿ0-9]+/gi, ' ')\n    .trim();\n\nconst nameKey = (name, city) => normalise(name) + '|' + normalise(city);\n\nconst knownIds = new Set();\nconst knownNames = new Set();\n\nfor (const row of knownRows) {\n  if (row.place_id) knownIds.add(String(row.place_id));\n  if (row.name) knownNames.add(nameKey(row.name, row.city));\n}\n\nstats.knownBusinessesInMemory = knownRows.length;\n\nconst testMode = cfg.testMode === true;\nconst maxCandidatesRaw = testMode ? cfg.testMaxCandidates : cfg.maxCandidatesPerRun;\nconst maxCandidatesNum = Number(maxCandidatesRaw);\nconst maxCandidates =\n  Number.isFinite(maxCandidatesNum) && maxCandidatesNum > 0 ? Math.floor(maxCandidatesNum) : 60;\n\nconst fresh = [];\nlet duplicates = 0;\n\nfor (const candidate of candidates) {\n  const id = String(candidate.place_id ?? '');\n  const key = nameKey(candidate.name, candidate.city);\n\n  if ((id && knownIds.has(id)) || knownNames.has(key)) {\n    duplicates++;\n    continue;\n  }\n\n  if (id) knownIds.add(id);\n  knownNames.add(key);\n  fresh.push(candidate);\n\n  if (fresh.length >= maxCandidates) break;\n}\n\nstats.duplicatesSkipped = duplicates;\nstats.newCandidates = fresh.length;\nstats.testMode = testMode;\n\nif (fresh.length === 0) {\n  return [{ json: { _noLeads: true, _stats: stats, _errors: errors } }];\n}\n\nreturn fresh.map((c) => ({ json: Object.assign({}, c, { _noLeads: false, _stats: stats, _errors: errors }) }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -224
+      ],
+      "id": "a1d21e88-1132-4a82-80c5-82ade627be86",
+      "name": "Keep New Businesses Only"
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "lead_hunter_memory"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "has_website": false,
+            "has_social": false
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "place_id",
+              "displayName": "place_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "city",
+              "displayName": "city",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "address",
+              "displayName": "address",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "maps_url",
+              "displayName": "maps_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "has_website",
+              "displayName": "has_website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "has_social",
+              "displayName": "has_social",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "social_links",
+              "displayName": "social_links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "reviews",
+              "displayName": "reviews",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lead_score",
+              "displayName": "lead_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "lead_reason",
+              "displayName": "lead_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "pitch_angle",
+              "displayName": "pitch_angle",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "recommended_service",
+              "displayName": "recommended_service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "ai_status",
+              "displayName": "ai_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "first_seen",
+              "displayName": "first_seen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2432,
+        -384
+      ],
+      "id": "df1f9a56-038d-421a-9a42-14e8e64c0370",
+      "name": "Save New Leads",
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "notes": "SELECT THE SAME DATA TABLE HERE. Writes today's leads so they are never reported twice."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the daily Telegram report in HTML and splits it into parts\n// so it never exceeds the message length limit.\n\nconst leads = $('Rank & Apply Limits')\n  .all()\n  .map((i) => i.json)\n  .filter((l) => l && l._noLeads !== true);\n\nconst memoryNode = $('Keep New Businesses Only').first()?.json ?? {};\nconst stats = memoryNode._stats ?? {};\nconst errors = Array.isArray(memoryNode._errors) ? memoryNode._errors : [];\n\nconst cfg = $('Config').first()?.json ?? {};\nconst maxInReport = Number(cfg.maxLeadsInTelegramReport);\nconst limit = Number.isFinite(maxInReport) && maxInReport > 0 ? Math.floor(maxInReport) : 15;\n\nconst esc = (v) =>\n  String(v ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n\nconst SERVICE_LABELS = {\n  landing_page: 'Landing page',\n  multi_page_site: 'Multi-page website',\n  online_store: 'Online store',\n  booking_site: 'Booking website',\n  portfolio_site: 'Portfolio website',\n  google_business_only: 'Google Business Profile only',\n};\n\nconst today = new Date().toISOString().slice(0, 10);\nconst shown = leads.slice(0, limit);\n\nconst header = [];\nheader.push('<b>🎯 AI Lead Hunter — ' + esc(today) + '</b>');\nif (stats.testMode === true) header.push('<i>⚠️ TEST MODE is on — limits are reduced</i>');\nheader.push('');\nheader.push('<b>New leads: ' + shown.length + '</b>' + (leads.length > shown.length ? ' (of ' + leads.length + ')' : ''));\nheader.push(\n  'Searches: ' +\n    (stats.searchesAttempted ?? 0) +\n    ' · Places found: ' +\n    (stats.placesSeen ?? 0) +\n    ' · Already had a website: ' +\n    (stats.skippedHasWebsite ?? 0),\n);\nheader.push(\n  'Duplicates skipped: ' +\n    (stats.duplicatesSkipped ?? 0) +\n    ' · In memory: ' +\n    (stats.knownBusinessesInMemory ?? 0),\n);\nif ((stats.searchesFailed ?? 0) > 0) {\n  header.push('⚠️ Failed searches: ' + stats.searchesFailed);\n}\nheader.push('');\n\nconst blocks = [];\n\nshown.forEach((lead, index) => {\n  const lines = [];\n  lines.push(\n    '<b>' + (index + 1) + '. ' + esc(lead.name) + '</b> — <b>' + (Number(lead.lead_score) || 0) + '/100</b>',\n  );\n  lines.push('📍 ' + esc(lead.city) + ' · ' + esc(lead.category));\n  if (lead.address) lines.push('🏠 ' + esc(lead.address));\n  if (lead.phone) lines.push('📞 ' + esc(lead.phone));\n  if (Number(lead.reviews) > 0) {\n    lines.push('⭐ ' + esc(lead.rating) + ' (' + esc(lead.reviews) + ' reviews)');\n  }\n  lines.push('🌐 No website' + (lead.has_social ? ', but has social media' : ', no social media found'));\n  if (lead.social_links) lines.push('🔗 ' + esc(lead.social_links));\n  if (lead.lead_reason) lines.push('💡 ' + esc(lead.lead_reason));\n  if (lead.pitch_angle) lines.push('🗣 <i>' + esc(lead.pitch_angle) + '</i>');\n  const service = SERVICE_LABELS[lead.recommended_service] ?? lead.recommended_service;\n  if (service) lines.push('🧩 Recommendation: ' + esc(service));\n  if (lead.maps_url) lines.push('🗺 <a href=\"' + esc(lead.maps_url) + '\">Google Maps</a>');\n  if (lead.ai_status !== 'ok') lines.push('<i>(scored without AI — fallback algorithm)</i>');\n  blocks.push(lines.join('\\n'));\n});\n\nconst footer = [];\nif (errors.length > 0) {\n  footer.push('');\n  footer.push('<b>⚠️ Warnings from this run:</b>');\n  for (const e of errors.slice(0, 5)) footer.push('• ' + esc(e));\n}\n\n// Split the report into Telegram-safe message sizes.\nconst MAX = 3500;\nconst messages = [];\nlet current = header.join('\\n');\n\nconst push = (text) => {\n  if (current.length + text.length + 2 > MAX) {\n    messages.push(current);\n    current = text;\n  } else {\n    current = current + '\\n\\n' + text;\n  }\n};\n\nfor (const block of blocks) push(block);\nif (footer.length > 0) push(footer.join('\\n'));\n\nmessages.push(current);\n\nreturn messages\n  .filter((m) => m && m.trim())\n  .map((message, index) => ({\n    json: { message, part: index + 1, totalParts: messages.length },\n  }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2672,
+        -384
+      ],
+      "id": "1a312229-d1ac-431c-a8ca-308ac526aeed",
+      "name": "Build Telegram Report"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Sends a report even when no new leads were found today.\n\nconst memoryNode = $('Keep New Businesses Only').first()?.json ?? {};\nconst stats = memoryNode._stats ?? {};\nconst errors = Array.isArray(memoryNode._errors) ? memoryNode._errors : [];\n\nconst esc = (v) =>\n  String(v ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n\nconst today = new Date().toISOString().slice(0, 10);\n\nconst lines = [];\nlines.push('<b>🎯 AI Lead Hunter — ' + esc(today) + '</b>');\nif (stats.testMode === true) lines.push('<i>⚠️ TEST MODE is on — limits are reduced</i>');\nlines.push('');\nlines.push('<b>No new leads today.</b>');\nlines.push('');\nlines.push('Searches run: ' + (stats.searchesAttempted ?? 0));\nlines.push('Places reviewed: ' + (stats.placesSeen ?? 0));\nlines.push('Already had their own website: ' + (stats.skippedHasWebsite ?? 0));\nlines.push('Duplicates (already in memory): ' + (stats.duplicatesSkipped ?? 0));\nlines.push('Total in database: ' + (stats.knownBusinessesInMemory ?? 0));\n\nif ((stats.searchesFailed ?? 0) > 0) {\n  lines.push('');\n  lines.push('⚠️ Failed searches: ' + stats.searchesFailed);\n}\n\nif (errors.length > 0) {\n  lines.push('');\n  lines.push('<b>⚠️ Warnings:</b>');\n  for (const e of errors.slice(0, 5)) lines.push('• ' + esc(e));\n}\n\nlines.push('');\nlines.push('<i>Tip: increase maxSearchesPerRun or add cities/categories in the Config node.</i>');\n\nreturn [{ json: { message: lines.join('\\n'), part: 1, totalParts: 1 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2592,
+        -192
+      ],
+      "id": "28de3afe-f6b2-4d65-8256-e63388f7ad2a",
+      "name": "No New Leads Message"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the critical workflow error message.\n// Fires only when the whole workflow crashes.\n\nconst data = $input.first()?.json ?? {};\n\nconst esc = (v) =>\n  String(v ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n\nconst workflowName = data.workflow?.name ?? 'AI Lead Hunter';\nconst message = data.execution?.error?.message ?? 'Unknown error';\nconst node = data.execution?.lastNodeExecuted ?? 'unknown node';\nconst url = data.execution?.url ?? '';\n\nconst lines = [];\nlines.push('<b>🚨 AI Lead Hunter — execution error</b>');\nlines.push('');\nlines.push('<b>Workflow:</b> ' + esc(workflowName));\nlines.push('<b>Node:</b> ' + esc(node));\nlines.push('<b>Error:</b> ' + esc(String(message).slice(0, 500)));\nif (url) lines.push('');\nif (url) lines.push('<a href=\"' + esc(url) + '\">Open execution in n8n</a>');\n\nreturn [{ json: { message: lines.join('\\n') } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2704,
+        48
+      ],
+      "id": "41f3aa07-e218-4425-9800-32ce42161120",
+      "name": "Build Error Message"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.aiBody) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1552,
+        -304
+      ],
+      "id": "a6e38336-19ad-4475-a118-01147fd62e8f",
+      "name": "AI Lead Scoring",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "notesInFlow": true,
+      "onError": "continueRegularOutput",
+      "notes": "Strict JSON schema output. Failures fall back to a heuristic score in the next node."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads the optional web-presence lookup, then builds one strict-JSON OpenAI\n// request per candidate.\n//\n// This node sits on BOTH branches of \"Web Enrichment Enabled\":\n//   enrichment ON  -> input items are SerpAPI responses, 1:1 with candidates\n//   enrichment OFF -> input items are the candidates themselves\n\nconst cfg = $('Config').first()?.json ?? {};\nconst enrichmentOn = cfg.enableWebEnrichment === true;\n\nconst candidates = $('Keep New Businesses Only')\n  .all()\n  .map((i) => i.json)\n  .filter((c) => c && c._noLeads !== true);\n\nconst inputs = $input.all();\n\nconst SOCIAL =\n  /(facebook\\.com|fb\\.com|instagram\\.com|tiktok\\.com|t\\.me|telegram\\.me|linkedin\\.com|youtube\\.com)/i;\n\n// Aggregators / registries / marketplaces - being listed there is not \"having a website\".\nconst DIRECTORY =\n  /(prom\\.ua|olx\\.ua|all\\.biz|youcontrol|opendatabot|clarity-project|edata|2gis|flamp|tripadvisor|booking\\.com|work\\.ua|rabota\\.ua|ua-region|yellowpages|google\\.|goo\\.gl|doc\\.ua|zakupki|misto|otzyv|zoon\\.|hotline\\.ua|rozetka|maps\\.app)/i;\n\nfunction readHost(link) {\n  if (typeof link !== 'string' || !link.trim()) return '';\n  try {\n    return new URL(link.trim()).hostname.replace(/^www\\./i, '');\n  } catch {\n    return '';\n  }\n}\n\nfunction analyseSerp(response) {\n  const result = {\n    used: true,\n    ok: false,\n    socialLinks: [],\n    possibleWebsites: [],\n    note: '',\n  };\n\n  if (!response || response.error) {\n    result.note = 'web lookup failed or was rate limited';\n    return result;\n  }\n\n  const organic = Array.isArray(response.organic_results) ? response.organic_results : [];\n  if (organic.length === 0) {\n    result.ok = true;\n    result.note = 'no web results found at all';\n    return result;\n  }\n\n  for (const entry of organic.slice(0, 10)) {\n    const host = readHost(entry?.link);\n    if (!host) continue;\n    if (SOCIAL.test(host)) {\n      if (!result.socialLinks.includes(entry.link)) result.socialLinks.push(entry.link);\n      continue;\n    }\n    if (DIRECTORY.test(host)) continue;\n    if (!result.possibleWebsites.includes(host)) result.possibleWebsites.push(host);\n  }\n\n  result.ok = true;\n  return result;\n}\n\nconst SCHEMA = {\n  type: 'json_schema',\n  json_schema: {\n    name: 'lead_assessment',\n    strict: true,\n    schema: {\n      type: 'object',\n      additionalProperties: false,\n      required: [\n        'needs_website',\n        'lead_score',\n        'confidence',\n        'business_type_normalized',\n        'reason',\n        'pitch_angle',\n        'recommended_service',\n        'red_flags',\n      ],\n      properties: {\n        needs_website: { type: 'boolean' },\n        lead_score: { type: 'integer' },\n        confidence: { type: 'string', enum: ['low', 'medium', 'high'] },\n        business_type_normalized: { type: 'string' },\n        reason: { type: 'string' },\n        pitch_angle: { type: 'string' },\n        recommended_service: {\n          type: 'string',\n          enum: [\n            'landing_page',\n            'multi_page_site',\n            'online_store',\n            'booking_site',\n            'portfolio_site',\n            'google_business_only',\n          ],\n        },\n        red_flags: { type: 'array', items: { type: 'string' } },\n      },\n    },\n  },\n};\n\nconst SYSTEM_PROMPT = [\n  'You qualify Ukrainian small businesses as sales leads for a web-design studio.',\n  'A GOOD lead is a real, operating business with paying customers that has no proper website',\n  '(no site at all, or only a social media page, or only a link-in-bio stub).',\n  'A BAD lead is: a large chain or franchise, a government or municipal body, a business that clearly',\n  'already has a real website, a marketplace listing rather than a business, or a business with no',\n  'signs of real activity.',\n  'lead_score is an integer 0-100. Higher means more worth contacting.',\n  'Score higher when: the business has reviews and a decent rating, is a service business that sells',\n  'appointments or custom work, and has only social media or nothing at all.',\n  'Score lower when: almost no reviews, looks dormant, looks like a chain, or may already have a site.',\n  'reason and pitch_angle must be written in English, one or two short sentences each.',\n  'pitch_angle is the concrete angle for a first cold outreach message to this specific business.',\n  'Answer ONLY with the JSON object described by the schema.',\n].join(' ');\n\nconst model = typeof cfg.aiModel === 'string' && cfg.aiModel ? cfg.aiModel : 'gpt-4o-mini';\n\nconst out = [];\n\nfor (let i = 0; i < candidates.length; i++) {\n  const candidate = candidates[i];\n\n  let enrichment;\n  if (enrichmentOn) {\n    enrichment = analyseSerp(inputs[i]?.json);\n  } else {\n    enrichment = { used: false, ok: false, socialLinks: [], possibleWebsites: [], note: 'web enrichment disabled in Config' };\n  }\n\n  const facts = {\n    name: candidate.name,\n    city: candidate.city,\n    searched_category: candidate.category,\n    google_type: candidate.google_type,\n    address: candidate.address,\n    phone: candidate.phone || 'unknown',\n    google_rating: candidate.rating,\n    google_review_count: candidate.reviews,\n    website_field_on_google: candidate.website || 'EMPTY',\n    website_is_social_page_only: candidate.website_is_social_only === true,\n    website_is_link_in_bio_stub: candidate.website_is_weak === true,\n    web_search_used: enrichment.used,\n    web_search_note: enrichment.note,\n    social_profiles_found: enrichment.socialLinks,\n    other_domains_found: enrichment.possibleWebsites,\n  };\n\n  const aiBody = {\n    model,\n    temperature: 0.2,\n    max_tokens: 500,\n    response_format: SCHEMA,\n    messages: [\n      { role: 'system', content: SYSTEM_PROMPT },\n      {\n        role: 'user',\n        content:\n          'Qualify this business as a website lead. Facts:\\n' + JSON.stringify(facts, null, 2),\n      },\n    ],\n  };\n\n  const socialLinks = enrichment.socialLinks.slice(0, 3);\n  if (candidate.website_is_social_only === true && candidate.website) {\n    if (!socialLinks.includes(candidate.website)) socialLinks.unshift(candidate.website);\n  }\n\n  out.push({\n    json: Object.assign({}, candidate, {\n      enrichment,\n      social_links_found: socialLinks,\n      has_social_presence: socialLinks.length > 0,\n      aiBody,\n    }),\n  });\n}\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        -224
+      ],
+      "id": "fec66275-b0a4-49c1-ac89-a94dab2df23b",
+      "name": "Build AI Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filters leads by quality and run limits, then shapes the data to match the Data Table columns exactly.\n// Always return output, even when no lead passes the filter.\n\nconst cfg = $('Config').first()?.json ?? {};\nconst items = $input.all().map((i) => i.json);\n\nconst num = (value, fallback) => {\n  const n = Number(value);\n  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;\n};\n\nconst testMode = cfg.testMode === true;\nconst maxLeads = testMode ? num(cfg.testMaxLeads, 3) : num(cfg.maxLeadsPerRun, 15);\n\nconst minScoreRaw = Number(cfg.minLeadScore);\nconst minScore = Number.isFinite(minScoreRaw) ? minScoreRaw : 55;\n\nconst qualified = items\n  .filter((item) => {\n    const a = item.assessment ?? {};\n    return a.needs_website === true && Number(a.lead_score) >= minScore;\n  })\n  .sort((a, b) => Number(b.assessment.lead_score) - Number(a.assessment.lead_score))\n  .slice(0, maxLeads);\n\nif (qualified.length === 0) {\n  return [{ json: { _noLeads: true } }];\n}\n\nconst firstSeen = new Date().toISOString();\n\nreturn qualified.map((item) => ({\n  json: {\n    place_id: String(item.place_id ?? ''),\n    name: String(item.name ?? ''),\n    category: String(item.assessment.business_type_normalized || item.category || ''),\n    city: String(item.city ?? ''),\n    address: String(item.address ?? ''),\n    phone: String(item.phone ?? ''),\n    website: String(item.website ?? ''),\n    maps_url: String(item.maps_url ?? ''),\n    has_website: false,\n    has_social: item.has_social_presence === true,\n    social_links: Array.isArray(item.social_links_found) ? item.social_links_found.join(' , ') : '',\n    rating: Number(item.rating) || 0,\n    reviews: Number(item.reviews) || 0,\n    lead_score: Number(item.assessment.lead_score) || 0,\n    lead_reason: String(item.assessment.reason ?? ''),\n    pitch_angle: String(item.assessment.pitch_angle ?? ''),\n    recommended_service: String(item.assessment.recommended_service ?? ''),\n    ai_status: String(item.ai_status ?? 'ok'),\n    first_seen: firstSeen,\n    status: 'new',\n  },\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        -288
+      ],
+      "id": "d6fba6ff-f8b7-4dbb-b2eb-76491edf7545",
+      "name": "Rank & Apply Limits"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Processes the OpenAI response for each candidate.\n// If the AI returned an error or an invalid response, use the fallback score.\n\nconst candidates = $('Build AI Request').all().map((i) => i.json);\nconst items = $input.all();\n\nconst ALLOWED_SERVICES = [\n  'landing_page',\n  'multi_page_site',\n  'online_store',\n  'booking_site',\n  'portfolio_site',\n  'google_business_only',\n];\n\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  if (!t) return null;\n\n  const fenced = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  if (fenced) t = fenced[1].trim();\n\n  try {\n    return JSON.parse(t);\n  } catch {\n    // Plain parsing failed - look for JSON embedded in the text.\n  }\n\n  const first = t.indexOf('{');\n  const last = t.lastIndexOf('}');\n  if (first !== -1 && last > first) {\n    try {\n      return JSON.parse(t.slice(first, last + 1));\n    } catch {\n      return null;\n    }\n  }\n  return null;\n}\n\n// Fallback score, so an AI failure never loses a lead.\nfunction heuristic(candidate) {\n  let score = 55;\n  const reviews = Number(candidate.reviews) || 0;\n  const rating = Number(candidate.rating) || 0;\n\n  if (reviews >= 100) score += 18;\n  else if (reviews >= 30) score += 12;\n  else if (reviews >= 10) score += 6;\n  else if (reviews === 0) score -= 15;\n\n  if (rating >= 4.5) score += 8;\n  else if (rating >= 4.0) score += 4;\n\n  if (candidate.has_social_presence === true) score += 8;\n  if (!candidate.website) score += 5;\n\n  score = Math.max(0, Math.min(100, score));\n\n  return {\n    needs_website: true,\n    lead_score: score,\n    confidence: 'low',\n    business_type_normalized: candidate.category || candidate.google_type || '',\n    reason: 'Scored automatically (without AI): business has no website of its own.',\n    pitch_angle: 'Offer a simple business-card website instead of a social media page.',\n    recommended_service: 'landing_page',\n    red_flags: [],\n  };\n}\n\nfunction clampScore(value, fallback) {\n  const n = Number(value);\n  if (!Number.isFinite(n)) return fallback;\n  return Math.max(0, Math.min(100, Math.round(n)));\n}\n\nfunction asText(value, fallback) {\n  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 500) : fallback;\n}\n\nconst out = [];\n\nfor (let i = 0; i < candidates.length; i++) {\n  const candidate = candidates[i];\n  const response = items[i]?.json ?? {};\n\n  let assessment = null;\n  let aiStatus = 'ok';\n  let aiNote = '';\n\n  if (response.error) {\n    aiStatus = 'fallback';\n    aiNote = 'AI request failed';\n  } else {\n    const choice = Array.isArray(response.choices) ? response.choices[0] : null;\n    const refusal = choice?.message?.refusal;\n\n    if (refusal) {\n      aiStatus = 'fallback';\n      aiNote = 'AI refused to answer';\n    } else {\n      const parsed = extractJson(choice?.message?.content);\n      if (!parsed || typeof parsed !== 'object') {\n        aiStatus = 'fallback';\n        aiNote = 'AI output was not valid JSON';\n      } else {\n        assessment = parsed;\n      }\n    }\n  }\n\n  const fallback = heuristic(candidate);\n\n  if (!assessment) {\n    assessment = fallback;\n  }\n\n  const service = asText(assessment.recommended_service, fallback.recommended_service);\n  const confidence = asText(assessment.confidence, 'low').toLowerCase();\n\n  const clean = {\n    needs_website: assessment.needs_website === false ? false : true,\n    lead_score: clampScore(assessment.lead_score, fallback.lead_score),\n    confidence: ['low', 'medium', 'high'].includes(confidence) ? confidence : 'low',\n    business_type_normalized: asText(\n      assessment.business_type_normalized,\n      fallback.business_type_normalized,\n    ),\n    reason: asText(assessment.reason, fallback.reason),\n    pitch_angle: asText(assessment.pitch_angle, fallback.pitch_angle),\n    recommended_service: ALLOWED_SERVICES.includes(service) ? service : 'landing_page',\n    red_flags: Array.isArray(assessment.red_flags)\n      ? assessment.red_flags.filter((f) => typeof f === 'string').slice(0, 5)\n      : [],\n  };\n\n  out.push({\n    json: Object.assign({}, candidate, {\n      assessment: clean,\n      ai_status: aiStatus,\n      ai_note: aiNote,\n    }),\n  });\n}\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -288
+      ],
+      "id": "3da13abc-523f-4994-b875-62b13b31dadc",
+      "name": "Parse AI Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d9ba262b-9db5-428c-afca-4a98a0fde8b5",
+              "leftValue": "={{ $json._noLeads !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2192,
+        -288
+      ],
+      "id": "d3a0bee2-6812-4288-acca-8961b53f63bb",
+      "name": "Qualified Leads?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ed9c537c-ea12-4170-9129-143233d2e0d8",
+              "leftValue": "={{ $json._noLeads !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        752,
+        -144
+      ],
+      "id": "4be622a4-3bdf-4e5b-8cc2-cbba3d4b3f47",
+      "name": "New Leads?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "aba505ba-c6e9-4b0c-b43d-4bb54d54a05c",
+              "leftValue": "={{ $('Config').first().json.enableWebEnrichment === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        928,
+        -224
+      ],
+      "id": "ad671753-06c5-4997-b35d-56563b653e00",
+      "name": "Web Enrichment Enabled?"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        -400
+      ],
+      "id": "b743c79d-116e-4092-a655-e98aecac238b",
+      "name": "Web Presence Lookup",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "chatId": "={{ $('Config').first().json.telegramChatId }}"
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2992,
+        48
+      ],
+      "id": "2240d03c-e285-4a1e-9004-f3f3278bfe5b",
+      "name": "Send Error Alert"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Config').first().json.telegramChatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2976,
+        -320
+      ],
+      "id": "c73f446d-c691-43b8-a136-399b324a7a50",
+      "name": "Send Telegram Report",
+      "notesInFlow": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Chat ID comes from the Config node, not from here."
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        2432,
+        48
+      ],
+      "id": "3e837986-6929-4114-88ff-4edbeedbd149",
+      "name": "Error Trigger",
+      "notesInFlow": true,
+      "notes": "Fires only if the whole execution crashes. Set this workflow as its own Error Workflow."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Build Search Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Run 09:00": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test Run": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Queries": {
+      "main": [
+        [
+          {
+            "node": "Search Google Maps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Google Maps": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Filter Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Filter Businesses": {
+      "main": [
+        [
+          {
+            "node": "Get Known Businesses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Known Businesses": {
+      "main": [
+        [
+          {
+            "node": "Keep New Businesses Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep New Businesses Only": {
+      "main": [
+        [
+          {
+            "node": "New Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save New Leads": {
+      "main": [
+        [
+          {
+            "node": "Build Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Telegram Report": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No New Leads Message": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Message": {
+      "main": [
+        [
+          {
+            "node": "Send Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Lead Scoring": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Request": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Scoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank & Apply Limits": {
+      "main": [
+        [
+          {
+            "node": "Qualified Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Rank & Apply Limits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qualified Leads?": {
+      "main": [
+        [
+          {
+            "node": "Save New Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No New Leads Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Leads?": {
+      "main": [
+        [
+          {
+            "node": "Web Enrichment Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No New Leads Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Web Enrichment Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Web Presence Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Web Presence Lookup": {
+      "main": [
+        [
+          {
+            "node": "Build AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Alert": {
+      "main": [
+        []
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
